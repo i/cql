@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"io"
+	"log"
 	"sync"
 )
 
@@ -78,16 +81,23 @@ func (f *frame) bytes() ([]byte, error) {
 	if err := binary.Write(buf, binary.BigEndian, f.opcode); err != nil {
 		return nil, err
 	}
-	if err := binary.Write(buf, binary.BigEndian, f.length); err != nil {
-		return nil, err
-	}
+
+	// write body to a buffer
 	bb, err := f.body.bytes()
 	if err != nil {
 		return nil, err
 	}
+
+	// write length to frame
+	if err := binary.Write(buf, binary.BigEndian, int32(len(bb))); err != nil {
+		return nil, err
+	}
+
+	// write body to frame
 	if _, err := buf.Write(bb); err != nil {
 		return nil, err
 	}
+
 	return buf.Bytes(), nil
 }
 
@@ -151,8 +161,12 @@ func startupFrame() *frame {
 
 func (s _string) bytes() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, _short(len(s)))
-	buf.Write([]byte(s))
+	if err := binary.Write(buf, binary.BigEndian, _short(len(s))); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write([]byte(s)); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 
@@ -180,6 +194,7 @@ func (m _stringMap) bytes() ([]byte, error) {
 			return nil, err
 		}
 	}
+	fmt.Println(192, buf.Bytes())
 	return buf.Bytes(), nil
 }
 
@@ -205,4 +220,13 @@ func newFrame() *frame {
 	f.length = 0
 	f.body = nil
 	return f
+}
+
+func readFrame(r io.Reader) (*frame, error) {
+	var errCode _int
+	if err := binary.Read(r, binary.BigEndian, &errCode); err != nil {
+		return nil, err
+	}
+	log.Printf("error code: %v", errCode)
+	return nil, nil
 }

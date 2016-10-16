@@ -4,26 +4,22 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"time"
 )
 
 func main() {
-	conn, err := net.Dial("tcp", "localhost:7199")
+	log.Println("connecting...")
+	conn, err := net.Dial("tcp", "127.0.0.1:9042")
 	fatalIfError("error connecting", err)
 
-	fmt.Println(conn)
-
-	bb, err := startupFrame().bytes()
+	frame := startupFrame()
+	bb, err := frame.bytes()
 	fatalIfError("error serializing startup frame", err)
 
 	_, err = conn.Write(bb)
 	fatalIfError("error writing startup frame", err)
 
-	time.Sleep(time.Second)
-
-	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
-	fmt.Println(n)
+	//f, err := readResponse(buf[:n])
+	_, err = readFrame(conn)
 	fatalIfError("error reading", err)
 
 }
