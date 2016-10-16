@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
-	"log"
 	"sync"
 )
 
@@ -59,42 +57,32 @@ type body interface {
 }
 
 type frame struct {
-	version version
-	flags   int8
-	stream  int16
-	opcode  opcode
-	length  int32
-	body    body
+	header *header
+	body   []byte
 }
 
 func (f *frame) bytes() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	if err := binary.Write(buf, binary.BigEndian, f.version); err != nil {
+	if err := binary.Write(buf, binary.BigEndian, f.header.Version); err != nil {
 		return nil, err
 	}
-	if err := binary.Write(buf, binary.BigEndian, f.flags); err != nil {
+	if err := binary.Write(buf, binary.BigEndian, f.header.Flags); err != nil {
 		return nil, err
 	}
-	if err := binary.Write(buf, binary.BigEndian, f.stream); err != nil {
+	if err := binary.Write(buf, binary.BigEndian, f.header.Stream); err != nil {
 		return nil, err
 	}
-	if err := binary.Write(buf, binary.BigEndian, f.opcode); err != nil {
-		return nil, err
-	}
-
-	// write body to a buffer
-	bb, err := f.body.bytes()
-	if err != nil {
+	if err := binary.Write(buf, binary.BigEndian, f.header.Opcode); err != nil {
 		return nil, err
 	}
 
 	// write length to frame
-	if err := binary.Write(buf, binary.BigEndian, int32(len(bb))); err != nil {
+	if err := binary.Write(buf, binary.BigEndian, int32(len(f.body))); err != nil {
 		return nil, err
 	}
 
 	// write body to frame
-	if _, err := buf.Write(bb); err != nil {
+	if _, err := buf.Write(f.body); err != nil {
 		return nil, err
 	}
 
@@ -147,16 +135,22 @@ const (
 	_compressionString = "COMPRESSION"
 )
 
-func startupFrame() *frame {
+func startupFrame() (*frame, error) {
+	h := newHeader()
+	h.Version = _versionRequest
+	h.Flags = 0
+	h.Stream = 1
+	h.Opcode = _startup
 	f := newFrame()
-	f.version = _versionRequest
-	f.flags = 0
-	f.stream = 1
-	f.opcode = _startup
-	f.body = _stringMap(map[string]string{
+	f.header = h
+	var err error
+	f.body, err = _stringMap(map[string]string{
 		_cqlVersionKey: _cqlVersionValue,
-	})
-	return f
+	}).bytes()
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
 }
 
 func (s _string) bytes() ([]byte, error) {
@@ -194,39 +188,76 @@ func (m _stringMap) bytes() ([]byte, error) {
 			return nil, err
 		}
 	}
-	fmt.Println(192, buf.Bytes())
 	return buf.Bytes(), nil
 }
 
-type version int8
+type version byte
 
 const (
 	_versionRequest  = 0x03
 	_versionResponse = 0x83
 )
 
-var framePool = &sync.Pool{
-	New: func() interface{} {
-		return new(frame)
-	},
-}
+var (
+	framePool = &sync.Pool{
+		New: func() interface{} {
+			return new(frame)
+		},
+	}
+	headerPool = sync.Pool{
+		New: func() interface{} {
+			return new(header)
+		},
+	}
+)
 
 func newFrame() *frame {
 	f := framePool.Get().(*frame)
-	f.version = 0
-	f.flags = 0
-	f.stream = 0
-	f.opcode = 0
-	f.length = 0
+	f.header = nil
 	f.body = nil
 	return f
 }
 
-func readFrame(r io.Reader) (*frame, error) {
-	var errCode _int
-	if err := binary.Read(r, binary.BigEndian, &errCode); err != nil {
+func newHeader() *header {
+	h := headerPool.Get().(*header)
+	h.Version = 0
+	h.Flags = 0
+	h.Stream = 0
+	h.Opcode = 0
+	h.Length = 0
+	return h
+}
+
+type header struct {
+	Version version
+	Flags   int8
+	Stream  int16
+	Opcode  opcode
+	Length  int32
+}
+
+func readHeader(r io.Reader) (*header, error) {
+	h := new(header)
+	if err := binary.Read(r, binary.BigEndian, h); err != nil {
 		return nil, err
 	}
-	log.Printf("error code: %v", errCode)
-	return nil, nil
+	return h, nil
+}
+
+func readFrame(r io.Reader) (*frame, error) {
+	h, err := readHeader(r)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, h.Length)
+	if _, err := r.Read(buf); err != nil {
+		return nil, err
+	}
+
+	f := newFrame()
+	f.header = h
+	f.body = buf
+
+	return f, nil
 }

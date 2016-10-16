@@ -11,16 +11,17 @@ func main() {
 	conn, err := net.Dial("tcp", "127.0.0.1:9042")
 	fatalIfError("error connecting", err)
 
-	frame := startupFrame()
-	bb, err := frame.bytes()
+	frame, err := startupFrame()
+	fatalIfError("error creating startup frame", err)
+	fb, err := frame.bytes()
 	fatalIfError("error serializing startup frame", err)
-
-	_, err = conn.Write(bb)
+	conn.Write(fb)
 	fatalIfError("error writing startup frame", err)
 
-	//f, err := readResponse(buf[:n])
-	_, err = readFrame(conn)
+	f, err := readFrame(conn)
 	fatalIfError("error reading", err)
+
+	fmt.Println(f.header)
 
 }
 
